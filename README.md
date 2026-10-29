@@ -55,6 +55,12 @@ Ideally, please use GitHub issues for this, with the best method achieved by set
 - (Schimi1983) Fixed: with several inverters an offline inverter could show old values again
 - (Schimi1983) Commands are confirmed (ack) only after OpenDTU accepted them, invalid limits are rejected
 - (Schimi1983) Address field accepts input like `http://192.168.1.10/`
+- (Schimi1983) Status of the last limit and on/off command, maximum power of the inverter [#226]
+- (Schimi1983) Event log of each inverter (number, last event, list) [#261]
+- (Schimi1983) Radio statistics per inverter and hints of OpenDTU (time not synchronized, radio problem, default password)
+- (Schimi1983) Temperature, memory and firmware of the OpenDTU; model and firmware of each inverter
+- (Schimi1983) Daily maximum power and temperature (OpenDTU v26.9 and newer)
+- (Schimi1983) Fixed: host name of the OpenDTU was never shown
 - (copilot) Adapter requires admin >= 7.7.22 now
 - (copilot) Adapter requires js-controller >= 6.0.11 now
 - (copilot) Adapter requires admin >= 7.6.17 now
