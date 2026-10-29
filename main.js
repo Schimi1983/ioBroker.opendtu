@@ -8,6 +8,8 @@ const { DataController } = require('./lib/dataController');
 const AUTH_USERNAME = 'admin';
 const DTU_POLL_INTERVAL = 60000;
 const HTTP_TIMEOUT = 10000;
+const COMMAND_POLL_INTERVAL = 2000;
+const COMMAND_POLL_COUNT = 15;
 
 /** limit_type values of the OpenDTU API per writable state */
 const LIMIT_TYPES = {
@@ -32,6 +34,9 @@ class Opendtu extends utils.Adapter {
         this.yieldTotalJob = null;
         this.dtuPollTimer = null;
         this.messageQueue = Promise.resolve();
+        this.commandPolls = new Set();
+        this.commandStatusRead = false;
+        this.locale = 'en';
         this.unloading = false;
 
         this.on('ready', this.onReady.bind(this));
@@ -64,7 +69,8 @@ class Opendtu extends utils.Adapter {
             headers: { 'X-Requested-With': 'XMLHttpRequest' },
         });
 
-        this.dataController = new DataController(this);
+        this.locale = await this.getEventLogLocale();
+        this.dataController = new DataController(this, serial => this.readEventLog(serial));
         this.websocketController = new WebsocketController(this, {
             onMessage: data => this.queueMessage(data),
             onConnectionChange: connected => this.onConnectionChange(connected),
@@ -105,6 +111,7 @@ class Opendtu extends utils.Adapter {
         // Confirm the command only if OpenDTU accepted it
         if (ok) {
             await this.setState(id, state.val, true);
+            void this.pollCommandStatus(stateID in LIMIT_TYPES ? 'limit' : 'power');
         }
     }
 
@@ -146,8 +153,17 @@ class Opendtu extends utils.Adapter {
      * @param data raw message or already parsed data
      */
     queueMessage(data) {
+        this.queueTask(() => this.processMessage(data));
+    }
+
+    /**
+     * Runs a task after all previous tasks (messages, event log) are done.
+     *
+     * @param task async function
+     */
+    queueTask(task) {
         this.messageQueue = this.messageQueue
-            .then(() => this.processMessage(data))
+            .then(task)
             .catch(err => this.log.error(`Error while processing data from OpenDTU: ${err}`));
     }
 
@@ -179,6 +195,15 @@ class Opendtu extends utils.Adapter {
         }
         if (message.dtu) {
             await this.dataController.processDTUData(message.dtu);
+        }
+        if (message.hints) {
+            await this.dataController.processHints(message.hints);
+        }
+        // Read the command status once, as soon as the inverters are known
+        if (!this.commandStatusRead && Array.isArray(message.inverters) && message.inverters.length) {
+            this.commandStatusRead = true;
+            void this.readCommandStatus('limit');
+            void this.readCommandStatus('power');
         }
     }
 
@@ -247,6 +272,83 @@ class Opendtu extends utils.Adapter {
             return false;
         }
         return this.postCommand('/limit/config', { serial, limit_type: limitType, limit_value: limit });
+    }
+
+    /**
+     * Reads /api/limit/status or /api/power/status.
+     *
+     * @param kind 'limit' or 'power'
+     * @returns true if a command is still pending
+     */
+    async readCommandStatus(kind) {
+        if (!this.api || !this.dataController || this.unloading) {
+            return false;
+        }
+        try {
+            const res = await this.api.get(`/${kind}/status`);
+            await this.dataController.processCommandStatus(res.data);
+            const field = `${kind}_set_status`;
+            return Object.values(res.data || {}).some(x => x && x[field] === 'Pending');
+        } catch (err) {
+            this.log.debug(`Cannot read ${kind} status: ${err}`);
+            return false;
+        }
+    }
+
+    /**
+     * After a command: follow its status until OpenDTU reports a result (max. 30 s).
+     *
+     * @param kind 'limit' or 'power'
+     */
+    async pollCommandStatus(kind) {
+        if (this.commandPolls.has(kind)) {
+            return; // already running
+        }
+        this.commandPolls.add(kind);
+        try {
+            for (let i = 0; i < COMMAND_POLL_COUNT && !this.unloading; i++) {
+                await this.delay(COMMAND_POLL_INTERVAL);
+                if (!(await this.readCommandStatus(kind))) {
+                    break;
+                }
+            }
+        } finally {
+            this.commandPolls.delete(kind);
+        }
+    }
+
+    /**
+     * Reads the event log of an inverter. Called only when the number of entries changed.
+     *
+     * @param serial inverter serial
+     */
+    async readEventLog(serial) {
+        if (!this.api || !this.dataController || this.unloading) {
+            return;
+        }
+        try {
+            const res = await this.api.get('/eventlog/status', { params: { inv: serial, locale: this.locale } });
+            this.queueTask(
+                () => this.dataController && this.dataController.processEventLog(serial, res.data && res.data.events),
+            );
+        } catch (err) {
+            this.log.debug(`Cannot read event log of ${serial}: ${err}`);
+        }
+    }
+
+    /**
+     * OpenDTU knows the event texts in English, German and French.
+     *
+     * @returns locale for the event log
+     */
+    async getEventLogLocale() {
+        try {
+            const sysConfig = await this.getForeignObjectAsync('system.config');
+            const lang = sysConfig && sysConfig.common && sysConfig.common.language;
+            return lang === 'de' || lang === 'fr' ? lang : 'en';
+        } catch {
+            return 'en';
+        }
     }
 
     /**
