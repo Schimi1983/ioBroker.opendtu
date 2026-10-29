@@ -35,6 +35,8 @@ class Opendtu extends utils.Adapter {
         this.dtuPollTimer = null;
         this.messageQueue = Promise.resolve();
         this.commandPolls = new Set();
+        this.devInfoDone = new Set();
+        this.devInfoBusy = new Set();
         this.commandStatusRead = false;
         this.locale = 'en';
         this.unloading = false;
@@ -70,7 +72,10 @@ class Opendtu extends utils.Adapter {
         });
 
         this.locale = await this.getEventLogLocale();
-        this.dataController = new DataController(this, serial => this.readEventLog(serial));
+        this.dataController = new DataController(this, {
+            onEventCount: serial => this.readEventLog(serial),
+            onReachable: serial => this.readDevInfo(serial),
+        });
         this.websocketController = new WebsocketController(this, {
             onMessage: data => this.queueMessage(data),
             onConnectionChange: connected => this.onConnectionChange(connected),
@@ -217,7 +222,17 @@ class Opendtu extends utils.Adapter {
                 this.api.get('/network/status'),
                 this.api.get('/system/status'),
             ]);
-            dtu = { ...network.data, uptime: system.data.uptime, reachable: true };
+            const sys = system.data || {};
+            dtu = {
+                ...network.data,
+                uptime: sys.uptime,
+                cputemp: sys.cputemp,
+                firmware: sys.git_hash,
+                heap_free: sys.heap_total - sys.heap_used,
+                heap_min_free: sys.heap_min_free,
+                heap_max_block: sys.heap_max_block,
+                reachable: true,
+            };
         } catch (err) {
             this.log.debug(`Cannot read DTU status: ${err}`);
             dtu = { reachable: false };
@@ -335,6 +350,37 @@ class Opendtu extends utils.Adapter {
             );
         } catch (err) {
             this.log.debug(`Cannot read event log of ${serial}: ${err}`);
+        }
+    }
+
+    /**
+     * Reads the device info (firmware, hardware) of an inverter once per run.
+     * OpenDTU knows it only after the inverter answered once, so it is requested when the inverter is reachable.
+     *
+     * @param serial inverter serial
+     */
+    async readDevInfo(serial) {
+        if (
+            !this.api ||
+            !this.dataController ||
+            this.unloading ||
+            this.devInfoDone.has(serial) ||
+            this.devInfoBusy.has(serial)
+        ) {
+            return;
+        }
+        this.devInfoBusy.add(serial);
+        try {
+            const res = await this.api.get('/devinfo/status', { params: { inv: serial } });
+            const info = res.data || {};
+            if (info.valid_data) {
+                this.devInfoDone.add(serial);
+                this.queueTask(() => this.dataController && this.dataController.processDevInfo(serial, info));
+            }
+        } catch (err) {
+            this.log.debug(`Cannot read device info of ${serial}: ${err}`);
+        } finally {
+            this.devInfoBusy.delete(serial);
         }
     }
 
