@@ -9,7 +9,7 @@ const AUTH_USERNAME = 'admin';
 const DTU_POLL_INTERVAL = 60000;
 const HTTP_TIMEOUT = 10000;
 const COMMAND_POLL_INTERVAL = 2000;
-const COMMAND_POLL_COUNT = 15;
+const COMMAND_POLL_COUNT = 45;
 
 /** limit_type values of the OpenDTU API per writable state */
 const LIMIT_TYPES = {
@@ -278,7 +278,7 @@ class Opendtu extends utils.Adapter {
      * Reads /api/limit/status or /api/power/status.
      *
      * @param kind 'limit' or 'power'
-     * @returns true if a command is still pending
+     * @returns true while a command is not finished yet (Pending, or Failure which OpenDTU resends by itself)
      */
     async readCommandStatus(kind) {
         if (!this.api || !this.dataController || this.unloading) {
@@ -288,7 +288,9 @@ class Opendtu extends utils.Adapter {
             const res = await this.api.get(`/${kind}/status`);
             await this.dataController.processCommandStatus(res.data);
             const field = `${kind}_set_status`;
-            return Object.values(res.data || {}).some(x => x && x[field] === 'Pending');
+            // @KI_HINWEIS: OpenDTU resends a failed limit/power command in its next poll cycle (Hoymiles.cpp),
+            // so 'Failure' is only an intermediate state - keep following it until 'Ok'.
+            return Object.values(res.data || {}).some(x => x && (x[field] === 'Pending' || x[field] === 'Failure'));
         } catch (err) {
             this.log.debug(`Cannot read ${kind} status: ${err}`);
             return false;
@@ -296,7 +298,7 @@ class Opendtu extends utils.Adapter {
     }
 
     /**
-     * After a command: follow its status until OpenDTU reports a result (max. 30 s).
+     * After a command: follow its status until OpenDTU reports Ok (max. 90 s).
      *
      * @param kind 'limit' or 'power'
      */
