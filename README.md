@@ -61,6 +61,8 @@ Ideally, please use GitHub issues for this, with the best method achieved by set
 - (Schimi1983) Temperature, memory and firmware of the OpenDTU; model and firmware of each inverter
 - (Schimi1983) Daily maximum power and temperature (OpenDTU v26.9 and newer)
 - (Schimi1983) Fixed: host name of the OpenDTU was never shown
+- (Schimi1983) Fixed: after a restart of the OpenDTU the current limit showed 0 % for some minutes
+- (Schimi1983) Total DC power over all inverters, message ID of the last event (for notifications)
 - (copilot) Adapter requires admin >= 7.7.22 now
 - (copilot) Adapter requires js-controller >= 6.0.11 now
 - (copilot) Adapter requires admin >= 7.6.17 now
