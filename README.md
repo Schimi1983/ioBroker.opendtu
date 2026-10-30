@@ -63,6 +63,7 @@ Ideally, please use GitHub issues for this, with the best method achieved by set
 - (Schimi1983) Fixed: host name of the OpenDTU was never shown
 - (Schimi1983) Fixed: after a restart of the OpenDTU the current limit showed 0 % for some minutes
 - (Schimi1983) Total DC power over all inverters, message ID of the last event (for notifications)
+- (Schimi1983) Roles of all objects corrected according to the ioBroker state roles (e.g. yield `value.energy.produced`, availability `indicator.reachable`, limits `level`, buttons write-only)
 - (copilot) Adapter requires admin >= 7.7.22 now
 - (copilot) Adapter requires js-controller >= 6.0.11 now
 - (copilot) Adapter requires admin >= 7.6.17 now
