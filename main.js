@@ -7,6 +7,9 @@ const { DataController } = require('./lib/dataController');
 
 const AUTH_USERNAME = 'admin';
 const DTU_POLL_INTERVAL = 60000;
+// OpenDTU keeps at most 15 events per inverter (ALARM_LOG_ENTRY_COUNT); when full the count no longer changes
+const EVENT_LOG_MAX = 15;
+const EVENT_LOG_FULL_INTERVAL = 300000;
 const HTTP_TIMEOUT = 10000;
 const COMMAND_POLL_INTERVAL = 2000;
 const COMMAND_POLL_COUNT = 45;
@@ -33,6 +36,7 @@ class Opendtu extends utils.Adapter {
         this.dataController = null;
         this.yieldTotalJob = null;
         this.dtuPollTimer = null;
+        this.eventLogTimer = null;
         this.messageQueue = Promise.resolve();
         this.commandPolls = new Set();
         this.devInfoDone = new Set();
@@ -84,6 +88,7 @@ class Opendtu extends utils.Adapter {
 
         await this.getDTUData();
         this.dtuPollTimer = this.setInterval(() => this.getDTUData(), DTU_POLL_INTERVAL);
+        this.eventLogTimer = this.setInterval(() => this.refreshFullEventLogs(), EVENT_LOG_FULL_INTERVAL);
         this.yieldTotalJob = schedule.scheduleJob('0 1 0 * * *', () => this.rewriteYieldTotal());
     }
 
@@ -140,6 +145,7 @@ class Opendtu extends utils.Adapter {
                 this.websocketController.stop();
             }
             this.clearInterval(this.dtuPollTimer);
+            this.clearInterval(this.eventLogTimer);
             if (this.yieldTotalJob) {
                 this.yieldTotalJob.cancel();
             }
@@ -384,6 +390,21 @@ class Opendtu extends utils.Adapter {
             this.log.debug(`Cannot read device info of ${serial}: ${err}`);
         } finally {
             this.devInfoBusy.delete(serial);
+        }
+    }
+
+    /**
+     * Re-reads the event log of reachable inverters whose log is full (15 entries).
+     * A full log no longer changes its count, so new events would be missed otherwise.
+     */
+    refreshFullEventLogs() {
+        if (!this.dataController || this.unloading) {
+            return;
+        }
+        for (const [serial, count] of this.dataController.eventCounts) {
+            if (count >= EVENT_LOG_MAX && this.dataController.reachable.get(serial) === true) {
+                void this.readEventLog(serial);
+            }
         }
     }
 
