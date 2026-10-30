@@ -286,6 +286,9 @@ class Opendtu extends utils.Adapter {
             this.log.warn(`Invalid limit ${limit} % for inverter ${serial} - please use 0 ... 100.`);
             return false;
         }
+        if (this.dataController) {
+            this.dataController.noteLimitCommand(serial, limit);
+        }
         return this.postCommand('/limit/config', { serial, limit_type: limitType, limit_value: limit });
     }
 
